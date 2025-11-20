@@ -7,7 +7,7 @@ from spacemk.spacelift import Spacelift
 
 @click.command(
     cls=HelpColorsCommand,
-    help="Set sensitive environment variable values in Spacelift.",
+    help="Set all environment variable values (sensitive and non-sensitive) in Spacelift.",
     help_headers_color="yellow",
     help_options_color="green",
 )

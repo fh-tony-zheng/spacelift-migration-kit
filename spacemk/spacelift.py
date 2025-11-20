@@ -75,19 +75,17 @@ class Spacelift:
 
         data = load_normalized_data()
         for env_var in data.get("stack_variables"):
-            # We only consider sensitive variables here
-            if not env_var.get("write_only"):
-                continue
+            # Now we consider both sensitive and non-sensitive variables
 
             if "-" in env_var.get("name"):
                 logging.warning(
-                    f"Sensitive environment variable '{env_var.get('name')}' has a dash in its name. Skipping."
+                    f"Environment variable '{env_var.get('name')}' has a dash in its name. Skipping."
                 )
                 continue
 
             if env_var.get("value") and "\n" in env_var.get("value"):
                 logging.warning(
-                    f"Sensitive environment variable '{env_var.get('name')}' has a '\\n' character in its value. "
+                    f"Environment variable '{env_var.get('name')}' has a '\\n' character in its value. "
                     "Skipping."
                 )
                 continue
@@ -106,6 +104,7 @@ class Spacelift:
         """
 
         env_var_id = f"TF_VAR_{env_var.get('name')}" if env_var.get("type") == "terraform" else env_var.get("name")
+        is_write_only = env_var.get("write_only", False)
 
         variables = {
             "stackId": env_var.get("_relationships.stack.slug"),
@@ -113,15 +112,16 @@ class Spacelift:
                 "id": env_var_id,
                 "type": "ENVIRONMENT_VARIABLE",
                 "value": env_var.get("value"),
-                "writeOnly": True,
+                "writeOnly": is_write_only,
             },
         }
 
         response = self.call_api(operation=operation, variables=variables)
 
         if response.get("errors"):
+            var_type = "sensitive" if is_write_only else "non-sensitive"
             logging.warning(
-                "Error setting sensitive environment variable "
+                f"Error setting {var_type} environment variable "
                 f"'{env_var.get('_relationships.stack.slug')}/{env_var_id}': "
                 f"{response.get('errors[0].message')}"
             )
@@ -225,14 +225,40 @@ class Spacelift:
 
     def set_sensitive_env_vars(self) -> None:
         env_vars = self._get_sensitive_env_vars()
+        imported_vars_by_stack = {}
+        
         for env_var in env_vars:
+            stack_slug = env_var.get("_relationships.stack.slug")
+            var_name = env_var.get("name")
+            
             if env_var.get("value"):
                 self._set_sensitive_env_var(env_var)
+                
+                # Track successfully imported variables
+                if stack_slug not in imported_vars_by_stack:
+                    imported_vars_by_stack[stack_slug] = []
+                imported_vars_by_stack[stack_slug].append(var_name)
             else:
+                var_type = "sensitive" if env_var.get("write_only", False) else "non-sensitive"
                 logging.debug(
-                    f"No value for '{env_var.get('_relationships.stack.slug')}/{env_var.get('name')}' "
-                    "sensitive environment variable. Skipping."
+                    f"No value for '{stack_slug}/{var_name}' "
+                    f"{var_type} environment variable. Skipping."
                 )
+        
+        # Output summary
+        if imported_vars_by_stack:
+            logging.info("\n" + "="*60)
+            logging.info("Workspace Variables Import Summary:")
+            logging.info("="*60)
+            for stack_slug, var_names in sorted(imported_vars_by_stack.items()):
+                logging.info(f"\nWorkspace: {stack_slug}")
+                logging.info(f"  Variables imported: {', '.join(sorted(var_names))}")
+            logging.info("\n" + "="*60)
+            logging.info(f"Total: {len(imported_vars_by_stack)} workspace(s), "
+                        f"{sum(len(v) for v in imported_vars_by_stack.values())} variable(s) imported")
+            logging.info("="*60)
+        else:
+            logging.info("No variables were imported.")
 
     def set_terraform_vars_with_invalid_name(self) -> None:
         for stack in self._get_stacks_with_invalid_env_var_names():
