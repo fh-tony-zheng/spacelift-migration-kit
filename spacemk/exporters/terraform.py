@@ -221,7 +221,34 @@ class TerraformExporter(BaseExporter):
 
         return data
 
+    def _find_existing_smk_agent_pool(self, organization_id: str) -> str | None:
+        """Find if an SMK agent pool already exists for the organization"""
+        try:
+            agent_pools = self._extract_data_from_api(
+                path=f"/organizations/{organization_id}/agent-pools",
+                properties=["id", "attributes.name"],
+            )
+            
+            for pool in agent_pools:
+                if pool.get("attributes.name") == "SMK":
+                    return pool.get("id")
+            
+            return None
+        except Exception as e:
+            logging.debug(f"Error checking for existing SMK agent pool: {e}")
+            return None
+
     def _create_agent_pool(self, organization_id: str) -> str:
+        # Check if SMK agent pool already exists and delete it
+        existing_pool_id = self._find_existing_smk_agent_pool(organization_id)
+        if existing_pool_id:
+            logging.info(f"Found existing SMK agent pool '{existing_pool_id}' for organization '{organization_id}'")
+            try:
+                self._delete_agent_pool(id_=existing_pool_id)
+                logging.info(f"Deleted existing SMK agent pool '{existing_pool_id}'")
+            except Exception as e:
+                logging.warning(f"Failed to delete existing SMK agent pool: {e}")
+        
         agent_pool_request_data = {
             "data": {
                 "attributes": {
