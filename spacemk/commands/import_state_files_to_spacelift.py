@@ -146,18 +146,69 @@ mutation DeleteContextForContextList($id: ID!) {
     spacelift.call_api(operation=delete_context_mutation, variables=delete_context_variables)
 
 
-def _get_space_ids(spacelift: Spacelift) -> list:
+def _get_space_ids_from_stacks(spacelift: Spacelift, stack_slugs: list[str]) -> list:
+    """Get space IDs by querying stacks by their slugs."""
+    space_ids = set()
+    
+    for slug in stack_slugs:
+        query = """
+query GetStack($stackId: ID!) {
+  stack(id: $stackId) {
+    id
+    space
+  }
+}
+"""
+        try:
+            response = spacelift.call_api(operation=query, variables={"stackId": slug})
+            stack_data = response.get("data.stack")
+            if stack_data:
+                space_id = stack_data.get("space")
+                if space_id:
+                    space_ids.add(space_id)
+                    logging.info(f"Found space ID '{space_id}' for stack '{slug}'")
+                else:
+                    logging.warning(f"Stack '{slug}' has no space ID")
+            else:
+                logging.warning(f"Stack '{slug}' not found in Spacelift")
+        except Exception as e:
+            logging.warning(f"Could not query stack '{slug}' to get space ID: {e}")
+            logging.debug(f"Exception details: {type(e).__name__}: {str(e)}", exc_info=True)
+    
+    return list(space_ids)
+
+
+def _get_space_ids(spacelift: Spacelift, space_names: list[str] | None = None) -> list:
     query = """
 query GetSpaces {
   spaces {
     id
+    name
   }
 }
 """
 
     response = spacelift.call_api(operation=query)
-
-    return [space.id for space in response.get("data.spaces")]
+    
+    all_spaces = response.get("data.spaces", [])
+    
+    # If space_names is provided, filter to only those spaces
+    if space_names:
+        space_names_set = set(space_names)
+        matched_spaces = [space for space in all_spaces if space.name in space_names_set]
+        
+        # Log which spaces were found and which weren't
+        found_names = {space.name for space in matched_spaces}
+        not_found = space_names_set - found_names
+        if not_found:
+            logging.warning(f"Could not find spaces in Spacelift: {', '.join(sorted(not_found))}")
+        if found_names:
+            logging.info(f"Matched spaces: {', '.join(sorted(found_names))}")
+        
+        return [space.id for space in matched_spaces]
+    
+    # Otherwise return all space IDs
+    return [space.id for space in all_spaces]
 
 
 def _trigger_task(spacelift: Spacelift, stack_id: str, workspace_id: str, wait: bool) -> None:
@@ -173,7 +224,17 @@ def _trigger_task(spacelift: Spacelift, stack_id: str, workspace_id: str, wait: 
 def import_state_files_to_spacelift(config, no_wait):
     data = load_normalized_data()
     spacelift = Spacelift(config.get("spacelift"))
-    space_ids = _get_space_ids(spacelift=spacelift)
+    
+    # Get stack slugs from the stacks being migrated
+    stack_slugs = [stack.slug for stack in data.get("stacks")]
+    
+    logging.info(f"Found {len(stack_slugs)} stack(s) to migrate: {', '.join(stack_slugs)}")
+    
+    # Get space IDs by querying the stacks directly in Spacelift
+    # This ensures we get the actual space IDs even if names don't match
+    space_ids = _get_space_ids_from_stacks(spacelift=spacelift, stack_slugs=stack_slugs)
+    
+    logging.info(f"Found {len(space_ids)} unique space(s) in Spacelift containing these stacks")
 
     api_endpoint = config.exporter.settings.api_endpoint
     if api_endpoint is None:
