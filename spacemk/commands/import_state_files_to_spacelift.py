@@ -220,10 +220,19 @@ def _trigger_task(spacelift: Spacelift, stack_id: str, workspace_id: str, wait: 
 
 @click.command(help="Upload Terraform state files to Spacelift.")
 @click.option("--no-wait", default=True, is_flag=True, help="Dont wait for the task to complete.")
+@click.option("--skip-sensitive-vars", is_flag=True, default=False, help="Skip setting sensitive environment variables before import.")
 @click.decorators.pass_meta_key("config")
-def import_state_files_to_spacelift(config, no_wait):
+def import_state_files_to_spacelift(config, no_wait, skip_sensitive_vars):
     data = load_normalized_data()
     spacelift = Spacelift(config.get("spacelift"))
+    
+    # Set sensitive environment variables before import (unless skipped)
+    if not skip_sensitive_vars:
+        logging.info("Setting sensitive environment variables before state import...")
+        spacelift.set_sensitive_env_vars()
+        logging.info("Sensitive environment variables set successfully.")
+    else:
+        logging.info("Skipping sensitive environment variables setup (--skip-sensitive-vars flag).")
     
     # Get stack slugs from the stacks being migrated
     stack_slugs = [stack.slug for stack in data.get("stacks")]
