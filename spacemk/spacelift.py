@@ -113,6 +113,7 @@ class Spacelift:
                 "type": "ENVIRONMENT_VARIABLE",
                 "value": env_var.get("value"),
                 "writeOnly": is_write_only,
+                "description": env_var.get("description"),
             },
         }
 
